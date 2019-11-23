@@ -4,11 +4,11 @@ output:
     orientation: rows
     vertical_layout: scroll
 params:
-  username: hrbrmstr
+  username: luriechildrens
   n_tweets_to_retrieve: 3000
 title: "Account Analysis of `r params$username`"
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: html
 ---
 
 <!-- NOTE THE PARAMETERS ^^ -->
@@ -34,6 +34,42 @@ library(tidyverse)
 extrafont::loadfonts(quiet = TRUE)
 
 user <- lookup_users(params$username)
+
+#influence element
+influence_snapshot <- function(user, trans=c("log10", "identity")) {
+  
+  user <- user[1]
+  trans <- match.arg(tolower(trimws(trans[1])), c("log10", "identity"))
+  
+  user_info <- lookup_users(user)
+  
+  user_followers <- get_followers(user_info$user_id)
+  uf_details <- lookup_users(user_followers$user_id)
+  
+  primary_influence <- scales::comma(sum(c(uf_details$followers_count, user_info$followers_count)))
+  
+  filter(uf_details, followers_count > 0) %>% 
+    ggplot(aes(followers_count)) +
+    geom_density(aes(y=..count..), color="lightslategray", fill="lightslategray",
+                 alpha=2/3, size=1) +
+    scale_x_continuous(expand=c(0,0), trans="log10", labels=scales::comma) +
+    scale_y_comma() +
+    labs(
+      x="Number of Followers of Followers (log scale)", 
+      y="Number of Followers",
+      title=sprintf("Follower chain distribution of %s (@%s)", user_info$name, user_info$screen_name),
+      subtitle=sprintf("Follower count: %s; Primary influence/reach: %s", 
+                       scales::comma(user_info$followers_count),
+                       primary_influence)
+    ) +
+    theme_ipsum_rc(grid="XY") -> gg
+  
+  print(gg)
+  
+  return(invisible(list(user_info=user_info, follower_details=uf_details)))
+  
+}
+#
 
 tl <- get_timeline(params$username, params$n_tweets_to_retrieve)
 attr(tl$created_at, 'tzone') = 'EST5EDT'
@@ -69,7 +105,14 @@ select(
   DT::datatable(options = list(pageLength = nrow(.)))
 ```
 
+### Primary Influence {data-width=66%}
 
+```{r languag-of-tweets, fig.width=1200/72, fig.height=500/72}
+influence_snapshot('luriechildrens')
+```
+
+Row {data-height=350}
+-------------------------------------
 ### Daily Rhythm {data-width=66%}
 
 ```{r daily-rhythm, fig.width=1200/72, fig.height=500/72}
@@ -85,6 +128,35 @@ count(tl, dow, hr) %>%
   coord_equal() +
   labs(x = NULL, y = NULL) + #, title = "Daily Rhythm") +
   theme_ipsum_rc(grid="")
+```
+
+### Daily Rhythm {data-width=44%}
+```{r connections}
+library(igraph)
+library(ggraph)
+
+rstats <- search_tweets("#all4your1", n=1500)
+
+# same as previous recipe
+filter(rstats, retweet_count > 0) %>% 
+  select(screen_name, mentions_screen_name) %>%
+  unnest(mentions_screen_name) %>% 
+  filter(!is.na(mentions_screen_name)) %>% 
+  graph_from_data_frame() -> rt_g
+
+V(rt_g)$node_label <- unname(ifelse(degree(rt_g)[V(rt_g)] > 2, names(V(rt_g)), "")) 
+V(rt_g)$node_size <- unname(ifelse(degree(rt_g)[V(rt_g)] > 2, degree(rt_g), 0)) 
+
+ggraph(rt_g, layout = 'linear', circular = TRUE) + 
+  geom_edge_arc(edge_width=0.125, aes(alpha=..index..)) +
+  geom_node_label(aes(label=node_label, size=node_size),
+                  label.size=0, fill="#ffffff66", segment.colour="springgreen",
+                  color="slateblue", repel=TRUE, family=font_rc, fontface="bold") +
+  coord_fixed() +
+  scale_size_area(trans="sqrt") +
+  labs(title="Retweet Relationships", subtitle="Most retweeted screen names labeled. Darkers edges == more retweets. Node size == larger degree") +
+  theme_graph(base_family=font_rc) +
+  theme(legend.position="none")
 ```
 
 Row {data-height=350}
@@ -115,7 +187,7 @@ count(tl, dow) %>%
 Row {data-height=500}
 -------------------------------------
 
-### Tweet Type {data-width=33%}
+### Tweet Type {data-width=50%}
 
 ```{r tweet-type, fig.height=500/72, fig.width=400/72}
 mutate(tl, tweet_type = case_when(
@@ -135,22 +207,8 @@ mutate(tl, tweet_type = case_when(
   theme_ipsum_rc(grid="X")
 ```
 
-### Language of Tweets {data-width=33%}
 
-```{r languag-of-tweets, fig.height=500/72, fig.width=400/72}
-count(tl, lang, sort=TRUE) %>% 
-  left_join(ISOcodes::ISO_639_2, c("lang"="Alpha_2")) %>% 
-  mutate(Name = gsub(";.*$", "", ifelse(is.na(Name), "Unknown", Name))) %>% 
-  mutate(Name = fct_inorder(Name) %>% fct_rev()) %>% 
-  ggplot(aes(Name, n)) +
-  geom_col(width=0.55, fill = ft_cols$blue) +
-  scale_y_comma(position = "right") +
-  coord_flip() +
-  labs(x = NULL, y = "Tweets") + #, title = "Language of Tweets") +
-  theme_ipsum_rc(grid="X")
-```
-
-### Used Interface {data-width=33%}
+### Used Interface {data-width=50%}
 
 ```{r used-interface, fig.height=500/72, fig.width=400/72}
 count(tl, source, sort=TRUE) %>% 
